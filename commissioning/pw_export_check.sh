@@ -1,4 +1,12 @@
 #!/bin/zsh
+# ============================================================================
+# DONOR / OLDER-FIRMWARE ONLY (annotated 2026-11-05).
+# Uses the old routed-LAN /api/ REST surface, which Tesla removed on FW 26.x.
+# It will NOT work against the live 26.34.1 gateway (TEDAPI-via-AP 192.168.91.1
+# is the only local path now). Keep it for commissioning the eBay DONOR gateway
+# while it's still on older firmware. Before use: update GW= to the donor's IP
+# and PW= to the donor's installer password (below are old Gateway-A values).
+# ============================================================================
 # pw_export_check.sh -- confirm the gateway's grid import/export limits.
 # Export limit = min_site_meter_power_kW: 0 = non-export, negative = export allowed.
 # (These are set in the Commissioning Wizard; this script only reads/confirms them.)

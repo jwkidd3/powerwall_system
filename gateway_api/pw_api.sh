@@ -1,4 +1,11 @@
 #!/bin/zsh
+# ============================================================================
+# DONOR / OLDER-FIRMWARE ONLY (annotated 2026-11-05).
+# Uses the routed-LAN /api/ REST surface, which Tesla removed on FW 26.x. It does
+# NOT work against the live 26.34.1 gateway (TEDAPI-via-AP 192.168.91.1 only).
+# Keep it for bringing up / probing the eBay DONOR gateway on older firmware;
+# update GW= to the donor's IP and the installer password before use.
+# ============================================================================
 # pw_api.sh -- complete, VERIFIED reference + runner for the Tesla Backup Gateway 2
 # local REST API.  Gateway 1232100-00-H @ 9603 Trailview, firmware 23.36.100 004d11eb
 # (pre-TEDAPI local API).  Every endpoint below was classified by live probe on this gateway:

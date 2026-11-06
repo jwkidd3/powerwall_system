@@ -1,4 +1,12 @@
 #!/bin/zsh
+# ============================================================================
+# DONOR / OLDER-FIRMWARE ONLY (annotated 2026-11-05).
+# Uses the old routed-LAN /api/ REST surface, which Tesla removed on FW 26.x.
+# It will NOT work against the live 26.34.1 gateway (TEDAPI-via-AP 192.168.91.1
+# is the only local path now). Keep it for commissioning the eBay DONOR gateway
+# while it's still on older firmware. Before use: update GW= to the donor's IP
+# and PW= to the donor's installer password (below are old Gateway-A values).
+# ============================================================================
 # pw_control_test.sh -- verify whether the LOCAL gateway accepts control writes
 # (operation mode + backup reserve). Safe: reposts the CURRENT values (no-op),
 # nothing changes. The HTTP code tells you if HA can control the Powerwall locally.
