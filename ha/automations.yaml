@@ -1,0 +1,37 @@
+- id: '1698885446051'
+  alias: Pool-Cold Temp
+  description: ''
+  triggers:
+  - entity_id:
+    - weather.forecast_home
+    attribute: temperature
+    below: 34
+    trigger: numeric_state
+  conditions: []
+  actions:
+  - data: {}
+    action: switch.turn_on
+    target:
+      entity_id: switch.mainpool
+  mode: single
+- id: tou_tariff_switch
+  alias: "TOU tariff switch"
+  trigger:
+    - platform: time
+      at: "06:00:00"
+      id: standard
+    - platform: time
+      at: "18:00:00"
+      id: peak
+    - platform: time
+      at: "21:00:00"
+      id: free
+  action:
+    - service: select.select_option
+      target:
+        entity_id:
+          - select.grid_import_tou
+          - select.battery_discharge_tou
+          - select.battery_discharge_daily
+      data:
+        option: "{{ trigger.id }}"

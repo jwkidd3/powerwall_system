@@ -1,0 +1,276 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+homeassistant:
+  packages: !include_dir_named packages
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+rest:
+  - resource: "https://www.ercot.com/api/1/services/read/dashboards/daily-prc.json"
+    scan_interval: 300
+    timeout: 60
+    sensor:
+      - name: "Ercot Status"
+        unique_id: ercot_status
+        icon: mdi:transmission-tower
+        value_template: >
+          {{ value_json.get('current_condition', {}).get('state', 'unknown') }}
+        json_attributes_path: "$.current_condition"
+        json_attributes:
+          - energy_level_value
+          - title
+          - condition_note
+          - eea_level
+          - prc_value
+      - name: "Grid Operating Reserves"
+        unique_id: ercot_prc
+        unit_of_measurement: "MW"
+        state_class: measurement
+        icon: mdi:flash
+        value_template: >
+          {{ value_json.get('current_condition', {}).get('prc_value', '0') | replace(',', '') | int(0) }}
+  - resource: http://192.168.10.101:8675/api/meters/aggregates
+    scan_interval: 30
+    timeout: 5
+    sensor:
+      - name: "Powerwall Grid Power"
+        unique_id: pw_site_power
+        value_template: "{{ value_json.site.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall Home Load"
+        unique_id: pw_load_power
+        value_template: "{{ value_json.load.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall Battery Power"
+        unique_id: pw_battery_power
+        value_template: "{{ value_json.battery.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+  - resource: http://192.168.10.101:8675/api/system_status/soe
+    scan_interval: 65
+    timeout: 5
+    sensor:
+      - name: "Powerwall Battery"
+        unique_id: pw_battery_soc
+        value_template: "{{ value_json.percentage | round(1) }}"
+        unit_of_measurement: "%"
+        device_class: battery
+        state_class: measurement
+  - resource: http://192.168.10.101:8675/api/system_status/grid_status
+    scan_interval: 125
+    timeout: 5
+    sensor:
+      - name: "Powerwall Grid Status"
+        unique_id: pw_grid_status
+        value_template: "{{ 'On Grid' if value_json.grid_status == 'SystemGridConnected' else 'Off Grid' }}"
+  - resource: http://192.168.10.101:8675/pod
+    scan_interval: 70
+    timeout: 5
+    sensor:
+      - name: "Powerwall Energy Remaining"
+        unique_id: pw_energy_remaining
+        value_template: "{{ (value_json.nominal_energy_remaining | float(0) / 1000) | round(1) }}"
+        unit_of_measurement: kWh
+        device_class: energy_storage
+        state_class: measurement
+      - name: "Powerwall Full Pack Energy"
+        unique_id: pw_full_pack_energy
+        value_template: "{{ (value_json.nominal_full_pack_energy | float(0) / 1000) | round(1) }}"
+        unit_of_measurement: kWh
+        device_class: energy_storage
+        state_class: measurement
+      - name: "Powerwall Reserve"
+        unique_id: pw_reserve_percent
+        value_template: "{{ value_json.backup_reserve_percent | round(0) }}"
+        unit_of_measurement: "%"
+  - resource: http://192.168.10.101:8675/api/operation
+    scan_interval: 305
+    timeout: 5
+    sensor:
+      - name: "Powerwall Operating Mode"
+        unique_id: pw_operating_mode
+        value_template: >-
+          {% set m = value_json.real_mode %}
+          {{ 'Backup-only' if m == 'backup'
+             else 'Self-Powered' if m == 'self_consumption'
+             else 'Time-Based' if m == 'autonomous'
+             else m }}
+  - resource: http://192.168.10.101:8675/alerts
+    scan_interval: 115
+    timeout: 5
+    sensor:
+      - name: "Powerwall Alerts"
+        unique_id: pw_alerts
+        value_template: "{{ value_json | count }}"
+      - name: "Powerwall Alert List"
+        unique_id: pw_alert_list
+        value_template: >-
+          {{ (value_json | join('\n')) if (value_json | count) > 0 else 'No active alerts' }}
+
+template:
+  - sensor:
+      - name: "Import Price"
+        unique_id: import_price
+        unit_of_measurement: "USD/kWh"
+        state: >
+          {% set h = now().hour %}
+          {{ 0 if (h >= 21 or h < 6) else 0.18 }}
+  - sensor:
+      - name: "Main Panel Amps"
+        unit_of_measurement: "A"
+        device_class: current
+        state_class: measurement
+        availability: "{{ states('sensor.main_panel_power_minute_average') not in ['unknown', 'unavailable'] }}"
+        state: >
+          {{ (states('sensor.main_panel_power_minute_average') | float(0) / 240) | round(1) }}
+  - sensor:
+      - name: "Powerwall Runtime at Load"
+        unique_id: pw_runtime_at_load
+        unit_of_measurement: h
+        state_class: measurement
+        icon: mdi:timer-sand
+        availability: >
+          {{ states('sensor.powerwall_energy_remaining') not in ['unknown','unavailable']
+             and states('sensor.powerwall_home_load') not in ['unknown','unavailable'] }}
+        state: >
+          {% set kwh = states('sensor.powerwall_energy_remaining') | float(0) %}
+          {% set load_w = states('sensor.powerwall_home_load') | float(0) %}
+          {{ (kwh / (load_w / 1000)) | round(1) if load_w > 0 else 0 }}
+      - name: "Electricity Period"
+        unique_id: electricity_period
+        icon: mdi:clock-outline
+        state: >
+          {% set h = now().hour %}
+          {% if 18 <= h < 21 %} Peak
+          {% elif h >= 21 or h < 6 %} Free
+          {% else %} Standard
+          {% endif %}
+      - name: "Arbitrage Savings (Today)"     
+        unique_id: arb_savings_today
+        unit_of_measurement: "USD"
+        device_class: monetary
+        state_class: total
+        icon: mdi:cash-fast
+        state: >
+          {{ (states('sensor.battery_discharge_daily_peak') | float(0) * 0.18) | round(2) }}
+      - name: "Arbitrage Savings (Month)"
+        unique_id: arb_savings_month
+        unit_of_measurement: "USD"
+        device_class: monetary
+        state_class: total
+        icon: mdi:cash
+        state: >
+          {{ (states('sensor.battery_discharge_tou_peak') | float(0) * 0.18) | round(2) }}
+      - name: "Grid Import Power"
+        unique_id: grid_import_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [states('sensor.powerwall_grid_power') | float(0), 0] | max }}"
+      - name: "Grid Export Power"
+        unique_id: grid_export_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [ -(states('sensor.powerwall_grid_power') | float(0)), 0] | max }}"
+      - name: "Battery Discharge Power"
+        unique_id: battery_discharge_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [states('sensor.powerwall_battery_power') | float(0), 0] | max }}"
+      - name: "Battery Charge Power"
+        unique_id: battery_charge_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [ -(states('sensor.powerwall_battery_power') | float(0)), 0] | max }}"
+  - trigger:
+      - platform: time_pattern
+        seconds: "/30"
+    binary_sensor:
+      - name: "Powerwall Feed Healthy"
+        unique_id: pw_feed_healthy
+        device_class: connectivity          # shows Connected / Disconnected
+        state: >
+          {{ states('sensor.powerwall_grid_power') not in ['unknown','unavailable']
+             and (now() - states.sensor.powerwall_grid_power.last_reported).total_seconds() < 120 }}
+    sensor:
+      - name: "Powerwall Feed Age"
+        unique_id: pw_feed_age
+        unit_of_measurement: s
+        state_class: measurement
+        icon: mdi:timer-alert-outline
+        state: >
+          {{ (now() - states.sensor.powerwall_grid_power.last_reported).total_seconds() | int }}
+
+# Integrate power (W) -> energy (kWh). TEDAPI has no lifetime counters, so HA
+# accumulates them itself from the directional power sensors above.
+sensor:
+  - platform: integration
+    source: sensor.grid_import_power
+    name: "Grid Imported"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.grid_export_power
+    name: "Grid Exported"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.battery_discharge_power
+    name: "Battery Discharged"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.battery_charge_power
+    name: "Battery Charged"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+
+utility_meter:
+  grid_import_tou:
+    source: sensor.grid_imported
+    cycle: monthly
+    tariffs:
+      - peak
+      - standard
+      - free
+  battery_discharge_tou:
+    source: sensor.battery_discharged
+    cycle: monthly
+    tariffs:
+      - peak
+      - standard
+      - free
+  battery_discharge_daily:
+    source: sensor.battery_discharged
+    cycle: daily
+    tariffs:
+      - peak
+      - standard
+      - free
