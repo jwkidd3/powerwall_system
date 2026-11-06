@@ -1,0 +1,354 @@
+# Home Assistant — Powerwall monitoring (read-only, air-gapped)
+# ---------------------------------------------------------------------------
+# Data path:  gateway (TEDAPI) --wlan0--> pypowerwall proxy on Pi --eth0--> HA
+#
+# The proxy runs on the Pi as a Docker container (jasonacox/pypowerwall,
+# TEDAPI mode: PW_HOST=192.168.91.1, PW_GW_PWD set, no cloud login), published
+# on the Pi's LAN side at 192.168.10.101:8675. HA reaches it over the home LAN.
+# This is the "read" half of the arbitrage control design — no v1r key, no cloud.
+#
+# Proxy endpoints used:
+#   /api/meters/aggregates     -> per-source instant_power (site/load/battery/solar)
+#   /api/system_status/soe     -> battery percentage
+#   /api/system_status/grid_status -> SystemGridConnected | SystemIslanded...
+#
+# Sign convention (pypowerwall): battery instant_power POSITIVE = discharging,
+# NEGATIVE = charging. site POSITIVE = importing from grid.
+# ===========================================================================
+
+# --- SENSORS: paste these items under your existing top-level `rest:` key ---
+# (rest: is a single key holding a list — do NOT add a second `rest:` block)
+rest:
+  - resource: http://192.168.10.101:8675/api/meters/aggregates
+    scan_interval: 30          # KEEP fast: instant power drives the live view + integration
+    sensor:
+      - name: "Powerwall Grid Power"
+        unique_id: pw_site_power
+        value_template: "{{ value_json.site.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall Home Load"
+        unique_id: pw_load_power
+        value_template: "{{ value_json.load.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall Battery Power"
+        unique_id: pw_battery_power
+        value_template: "{{ value_json.battery.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall Solar Power"
+        unique_id: pw_solar_power
+        value_template: "{{ value_json.solar.instant_power | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      # NOTE: TEDAPI does NOT populate lifetime energy counters -- site/battery/solar
+      # energy_imported/exported all read 0 (and there is no energy_charged/discharged).
+      # So we DERIVE kWh by INTEGRATING the working power sensors (Riemann sum) --
+      # see the directional template sensors and the `sensor:` integration block below.
+  - resource: http://192.168.10.101:8675/api/system_status/soe
+    scan_interval: 65          # SOC moves slowly; off-tick from aggregates to avoid collision
+    sensor:
+      - name: "Powerwall Battery"
+        unique_id: pw_battery_soc
+        value_template: "{{ value_json.percentage | round(1) }}"
+        unit_of_measurement: "%"
+        device_class: battery
+        state_class: measurement
+  - resource: http://192.168.10.101:8675/api/system_status/grid_status
+    scan_interval: 125         # grid state rarely changes; slow + off-tick
+    sensor:
+      - name: "Powerwall Grid Status"
+        unique_id: pw_grid_status
+        value_template: "{{ 'On Grid' if value_json.grid_status == 'SystemGridConnected' else 'Off Grid' }}"
+  # --- Tier 1: drives arbitrage decisions ---------------------------------
+  - resource: http://192.168.10.101:8675/pod
+    scan_interval: 70          # energy remaining / reserve drift slowly; off-tick
+    sensor:
+      - name: "Powerwall Energy Remaining"      # the real discharge floor (kWh, not %)
+        unique_id: pw_energy_remaining
+        value_template: "{{ (value_json.nominal_energy_remaining | float(0) / 1000) | round(1) }}"
+        unit_of_measurement: kWh
+        device_class: energy_storage
+        state_class: measurement
+      - name: "Powerwall Full Pack Energy"      # drifts down as the pack ages
+        unique_id: pw_full_pack_energy
+        value_template: "{{ (value_json.nominal_full_pack_energy | float(0) / 1000) | round(1) }}"
+        unit_of_measurement: kWh
+        device_class: energy_storage
+        state_class: measurement
+      - name: "Powerwall Reserve"               # backup reserve setpoint
+        unique_id: pw_reserve_percent
+        value_template: "{{ value_json.backup_reserve_percent | round(0) }}"
+        unit_of_measurement: "%"
+  - resource: http://192.168.10.101:8675/api/operation
+    scan_interval: 305         # mode almost never changes; very slow poll is fine
+    sensor:
+      - name: "Powerwall Operating Mode"        # confirm it's still Backup-only
+        unique_id: pw_operating_mode
+        value_template: >-
+          {% set m = value_json.real_mode %}
+          {{ 'Backup-only' if m == 'backup'
+             else 'Self-Powered' if m == 'self_consumption'
+             else 'Time-Based' if m == 'autonomous'
+             else m }}
+  - resource: http://192.168.10.101:8675/alerts
+    scan_interval: 115         # faults don't need second-resolution; slow + off-tick
+    sensor:
+      - name: "Powerwall Alerts"          # 0 = healthy; >0 = active faults, investigate
+        unique_id: pw_alerts
+        value_template: "{{ value_json | count }}"
+
+# --- TEMPLATE SENSORS: decision helpers (add under a top-level `template:` key) ---
+# Free-nights plan assumption: Peak 6-9pm, Free 9pm-6am, Standard otherwise.
+# Edit the hours if your TOU windows differ.
+template:
+  - sensor:
+      - name: "Powerwall Runtime at Load"   # hours the pack can carry the house right now
+        unique_id: pw_runtime_at_load       # full-pack-to-empty (reserve won't stop island discharge)
+        unit_of_measurement: h
+        state_class: measurement
+        icon: mdi:timer-sand
+        availability: >
+          {{ states('sensor.powerwall_energy_remaining') not in ['unknown','unavailable']
+             and states('sensor.powerwall_home_load') not in ['unknown','unavailable'] }}
+        state: >
+          {% set kwh = states('sensor.powerwall_energy_remaining') | float(0) %}
+          {% set load_w = states('sensor.powerwall_home_load') | float(0) %}
+          {{ (kwh / (load_w / 1000)) | round(1) if load_w > 0 else 0 }}
+      - name: "Electricity Period"          # Peak 6-9pm / Free 9pm-6am / Standard
+        unique_id: electricity_period
+        icon: mdi:clock-outline
+        state: >
+          {% set h = now().hour %}
+          {% if 18 <= h < 21 %} Peak
+          {% elif h >= 21 or h < 6 %} Free
+          {% else %} Standard
+          {% endif %}
+      - name: "Arbitrage Savings (Today)"   # today's peak kWh from battery x $0.18
+        unique_id: arb_savings_today
+        unit_of_measurement: "USD"
+        device_class: monetary
+        state_class: total
+        icon: mdi:cash-fast
+        state: >
+          {{ (states('sensor.battery_discharge_daily_peak') | float(0) * 0.18) | round(2) }}
+      - name: "Arbitrage Savings (Month)"   # month's peak kWh from battery x $0.18
+        unique_id: arb_savings_month        # recharge is free at night, so no cost to subtract
+        unit_of_measurement: "USD"
+        device_class: monetary
+        state_class: total
+        icon: mdi:cash
+        state: >
+          {{ (states('sensor.battery_discharge_tou_peak') | float(0) * 0.18) | round(2) }}
+      # --- directional power (split signed power into one-way W for integration) ---
+      # grid: + = importing, - = exporting   |   battery: + = discharging, - = charging
+      - name: "Grid Import Power"
+        unique_id: grid_import_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [states('sensor.powerwall_grid_power') | float(0), 0] | max }}"
+      - name: "Grid Export Power"
+        unique_id: grid_export_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [ -(states('sensor.powerwall_grid_power') | float(0)), 0] | max }}"
+      - name: "Battery Discharge Power"
+        unique_id: battery_discharge_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [states('sensor.powerwall_battery_power') | float(0), 0] | max }}"
+      - name: "Battery Charge Power"
+        unique_id: battery_charge_w
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ [ -(states('sensor.powerwall_battery_power') | float(0)), 0] | max }}"
+
+  # --- FEED HEALTH: self-monitoring of the TEDAPI data path -------------------
+  # Trigger-based so it re-checks every 30s even when the feed is DEAD and no
+  # source entity is updating (a plain state template would never re-fire).
+  # Uses last_reported (ticks on every poll, even unchanged values) to measure
+  # staleness. >120s = ~4 missed 30s polls = genuinely stale, not a single blip.
+  # NOTE: last_reported needs HA 2024.8+; on older HA swap it for last_changed.
+  - trigger:
+      - platform: time_pattern
+        seconds: "/30"
+    binary_sensor:
+      - name: "Powerwall Feed Healthy"
+        unique_id: pw_feed_healthy
+        device_class: connectivity          # renders Connected / Disconnected
+        state: >
+          {{ states('sensor.powerwall_grid_power') not in ['unknown','unavailable']
+             and (now() - states.sensor.powerwall_grid_power.last_reported).total_seconds() < 120 }}
+    sensor:
+      - name: "Powerwall Feed Age"          # seconds since last fresh data (graphable)
+        unique_id: pw_feed_age
+        unit_of_measurement: s
+        state_class: measurement
+        icon: mdi:timer-alert-outline
+        state: >
+          {{ (now() - states.sensor.powerwall_grid_power.last_reported).total_seconds() | int }}
+
+# --- INTEGRATION: turn the directional power (W) into energy (kWh) -----------
+# Riemann sum; creates total_increasing kWh sensors for Energy Dashboard + TOU.
+sensor:
+  - platform: integration
+    source: sensor.grid_import_power
+    name: "Grid Imported"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.grid_export_power
+    name: "Grid Exported"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.battery_discharge_power
+    name: "Battery Discharged"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+  - platform: integration
+    source: sensor.battery_charge_power
+    name: "Battery Charged"
+    unit_prefix: k
+    unit_time: h
+    method: left
+    max_sub_interval:
+      minutes: 1
+
+# --- TOU SPLIT: bucket grid-import kWh into peak/standard/free --------------
+# The arbitrage metric: once the 740 carries peak, `peak` should trend to ~0.
+# Creates select.grid_import_tou; the automation flips the bucket at TOU edges.
+utility_meter:
+  grid_import_tou:
+    source: sensor.grid_imported
+    cycle: monthly
+    tariffs:
+      - peak        # 6-9pm  (the expensive window the battery will cover)
+      - standard    # 6am-6pm
+      - free        # 9pm-6am (free-nights plan)
+  battery_discharge_tou:          # kWh the pack delivers, split by TOU window (monthly)
+    source: sensor.battery_discharged
+    cycle: monthly
+    tariffs:
+      - peak
+      - standard
+      - free
+  battery_discharge_daily:        # same, daily cycle -> today's peak discharge
+    source: sensor.battery_discharged
+    cycle: daily
+    tariffs:
+      - peak
+      - standard
+      - free
+
+# goes under a top-level `automation:` key (or add via the UI / !include)
+automation:
+  - alias: "TOU tariff switch"
+    trigger:
+      - platform: time
+        at: "06:00:00"
+        id: standard
+      - platform: time
+        at: "18:00:00"
+        id: peak
+      - platform: time
+        at: "21:00:00"
+        id: free
+    action:
+      - service: select.select_option
+        target:
+          entity_id:
+            - select.grid_import_tou
+            - select.battery_discharge_tou
+            - select.battery_discharge_daily
+        data:
+          option: "{{ trigger.id }}"
+
+  - alias: "Powerwall feed stale"          # fires only on a real stall, not a blip
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.powerwall_feed_healthy
+        to: "off"
+        for: {minutes: 2}
+    action:
+      - service: persistent_notification.create
+        data:
+          title: Powerwall feed stale
+          message: "No fresh TEDAPI data for 2+ min (age {{ states('sensor.powerwall_feed_age') }}s)."
+
+# --- FEED HEALTH CARD (small): add via Edit dashboard -> + Add Card -> Manual
+#
+# type: glance
+# title: Powerwall Feed
+# entities:
+#   - entity: binary_sensor.powerwall_feed_healthy
+#     name: Data
+#   - entity: sensor.powerwall_feed_age
+#     name: Age (s)
+
+# --- DASHBOARD CARD: add via Edit dashboard -> + Add Card -> Manual ---------
+# (this is a Lovelace card, NOT configuration.yaml — goes in a dashboard)
+#
+# type: entities
+# title: Powerwall
+# entities:
+#   - entity: sensor.powerwall_battery
+#     name: State of Charge
+#   - entity: sensor.powerwall_energy_remaining
+#     name: Energy Remaining
+#   - entity: sensor.powerwall_full_pack_energy
+#     name: Full Pack
+#   - entity: sensor.powerwall_reserve
+#     name: Reserve
+#   - entity: sensor.powerwall_operating_mode
+#     name: Mode
+#   - entity: sensor.powerwall_runtime_at_load
+#     name: Runtime at Load
+#   - entity: sensor.electricity_period
+#     name: Period
+#   - entity: sensor.powerwall_alerts
+#     name: Alerts
+#   - entity: sensor.powerwall_grid_status
+#     name: Grid
+#     icon: mdi:transmission-tower
+#   - entity: sensor.powerwall_grid_power
+#     name: Grid Power
+#   - entity: sensor.powerwall_home_load
+#     name: Home Load
+#   - entity: sensor.powerwall_battery_power
+#     name: Battery Power
+#   - entity: sensor.powerwall_solar_power
+#     name: Solar
+
+# --- OPTIONAL: animated flow (install flixlix/power-flow-card-plus via HACS) -
+#
+# type: custom:power-flow-card-plus
+# entities:
+#   grid:
+#     entity: sensor.powerwall_grid_power
+#   battery:
+#     entity: sensor.powerwall_battery_power
+#     state_of_charge: sensor.powerwall_battery
+#   solar:
+#     entity: sensor.powerwall_solar_power
+#   home:
+#     entity: sensor.powerwall_home_load
+# # if arrows point the wrong way, add `invert_state: true` under that entity

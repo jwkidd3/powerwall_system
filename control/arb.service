@@ -1,0 +1,31 @@
+# /etc/systemd/system/arb.service
+# sudo cp arb.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# sudo systemctl enable --now arb
+# journalctl -u arb -f    # watch it
+[Unit]
+Description=Arbitrage 740 controller (schedule + API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/arb
+# --- secrets / config (edit these) ---
+Environment=ARB_TOKEN=CHANGE_ME_long_random_token
+# TEST PHASE: simulated switch, no GPIO/740. REMOVE this line when the 740 is wired+proven.
+Environment=ARB_SIM=1
+Environment=GW_IP=192.168.91.1
+# Environment=GW_PWD=CDRSNFJAZR          # uncomment to enable real SOC + the floor
+Environment=PEAK_START=17:00            # Free Days 12: island when paid window starts
+Environment=PEAK_END=09:00              # close for the free charge window (wraps midnight)
+Environment=FLOOR_PCT=10               # stop discharging at 10% SOC
+Environment=MIN_SOC=50
+Environment=TZ=America/Chicago
+Environment=ARB_PORT=8676
+# bind 0.0.0.0 (private LAN); token gates every call
+ExecStart=/usr/bin/uvicorn arb_controller:app --host 0.0.0.0 --port ${ARB_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

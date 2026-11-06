@@ -1,0 +1,16 @@
+[Unit]
+Description=Powerwall monitor watchdog (wlan0 link + pypowerwall proxy freshness)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# adjust the path if you put the script elsewhere
+ExecStart=/home/pi/pw_watchdog.sh
+Restart=always
+RestartSec=10
+# needs root to bounce the NM connection and restart the docker container
+User=root
+
+[Install]
+WantedBy=multi-user.target

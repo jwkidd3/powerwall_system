@@ -1,0 +1,53 @@
+# Home Assistant — Plan B 740 controller integration
+# Pi reachable on the LAN/tailnet at http://<pi-ip>:8676
+# Store the token in secrets.yaml:   arb_token_bearer: "Bearer the-same-token-as-ARB_TOKEN"
+
+# --- buttons (open / close / back-to-auto) ---------------------------------
+rest_command:
+  arb_open:
+    url: "http://192.168.10.101:8676/open"
+    method: POST
+    headers:
+      authorization: !secret arb_token_bearer     # e.g. "Bearer xxxxx"
+  arb_close:
+    url: "http://192.168.10.101:8676/close"
+    method: POST
+    headers:
+      authorization: !secret arb_token_bearer
+  arb_auto:
+    url: "http://192.168.10.101:8676/auto"
+    method: POST
+    headers:
+      authorization: !secret arb_token_bearer
+
+# --- state (position / mode / soc) polled every 30 s -----------------------
+rest:
+  - resource: "http://192.168.10.101:8676/state"
+    method: GET
+    headers:
+      authorization: !secret arb_token_bearer
+    scan_interval: 30
+    sensor:
+      - name: "Arb 740 position"
+        value_template: "{{ value_json.position }}"     # open | closed
+      - name: "Arb 740 mode"
+        value_template: "{{ value_json.mode }}"         # auto | manual
+      - name: "Arb battery SOC"
+        value_template: "{{ value_json.soc }}"
+        unit_of_measurement: "%"
+
+# --- example: dashboard buttons --------------------------------------------
+# Add to a Lovelace dashboard:
+#   type: entities
+#   entities:
+#     - entity: sensor.arb_740_position
+#     - entity: sensor.arb_740_mode
+#     - entity: sensor.arb_battery_soc
+#   footer:
+#     type: buttons
+#     entities: []        # use button cards calling rest_command.arb_open / _close / _auto
+#
+# Or a script/automation:
+#   action: rest_command.arb_open      # island now (manual; auto-resumes next edge)
+#   action: rest_command.arb_close     # grid now
+#   action: rest_command.arb_auto      # hand back to the schedule

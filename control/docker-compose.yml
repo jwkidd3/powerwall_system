@@ -1,0 +1,28 @@
+# arb-controller — deploy on the controller Pi:
+#   cp .env.example .env   &&   nano .env     # set ARB_TOKEN
+#   docker compose up -d --build
+#   docker compose logs -f
+services:
+  arb-controller:
+    build: .
+    container_name: arb-controller
+    restart: unless-stopped
+    # host networking: reach the gateway AP (192.168.91.1) via the Pi's wlan0,
+    # and bind 8676 on the LAN for HA. (Same reason the proxy needs the AP.)
+    network_mode: host
+    env_file: .env                 # ARB_TOKEN (and optional GW_PWD) live here, uncommitted
+    environment:
+      ARB_SIM: "1"                 # TEST: simulated switch, no GPIO/740. REMOVE for real hardware.
+      GW_IP: "192.168.91.1"
+      PEAK_START: "17:00"          # Free Days 12: island when the paid window starts
+      PEAK_END: "09:00"            # close for the free charge window (wraps midnight)
+      FLOOR_PCT: "10"              # stop discharging at 10% SOC
+      MIN_SOC: "50"
+      TZ: "America/Chicago"
+      # GPIOZERO_PIN_FACTORY: "lgpio"   # uncomment with the real 740
+    # --- REAL 740 only: GPIO passthrough (uncomment when wiring the relay) ---
+    # devices:
+    #   - /dev/gpiochip0:/dev/gpiochip0
+    #   - /dev/gpiomem:/dev/gpiomem
+    # group_add:
+    #   - gpio
