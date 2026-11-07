@@ -9,7 +9,7 @@ Everything routes through one lock-guarded Relay, so a scheduled pulse and an
 API call can never fire at once. API calls set mode=manual (scheduler stands
 down) and auto-resume at the next schedule boundary, or immediately on /auto.
 
-Run:  ARB_TOKEN=... uvicorn arb_controller:app --host 0.0.0.0 --port 8676
+Run:  ARB_TOKEN=... uvicorn arb_controller:app --host 0.0.0.0 --port 8677
   (the schedule loop starts automatically on app startup)
 
 Env:  ARB_TOKEN   required  -- bearer token for every API call
@@ -52,25 +52,30 @@ PEAK_END = _parse_hhmm(os.environ.get("PEAK_END", "09:00"), dtime(9, 0))
 FLOOR_PCT = float(os.environ.get("FLOOR_PCT", "10"))   # stop discharging at 10% SOC
 MIN_SOC = float(os.environ.get("MIN_SOC", "50"))
 TOKEN = os.environ.get("ARB_TOKEN")
-POLL_S = 60
+POLL_S = 15
+
+
+_pw = None   # cached pypowerwall handle (one TEDAPI session, reused across ticks)
 
 
 def read_state():
     """TEDAPI read (no v1r): {'soc','energy_kwh','grid_ok'} or None on failure.
     Optional — only enables the SOC floor. Controller runs fine without it."""
+    global _pw
     gw_pwd = os.environ.get("GW_PWD")
     if not gw_pwd:
         return None
     try:
-        import pypowerwall
-        host = os.environ.get("GW_IP", "192.168.91.1")
-        pw = pypowerwall.Powerwall(host=host, password=gw_pwd[-5:],
-                                   email="", gw_pwd=gw_pwd)
-        soc = pw.level(scale=True)                 # app-scale % (matches what the app shows)
+        if _pw is None:
+            import pypowerwall
+            host = os.environ.get("GW_IP", "192.168.91.1")
+            _pw = pypowerwall.Powerwall(host=host, gw_pwd=gw_pwd, email="")
+        soc = _pw.level(scale=True)                # app-scale % (matches the app)
         return {"soc": soc,
                 "energy_kwh": (soc or 0) / 100.0 * 67.5,   # ~67.5 kWh usable (5x PW2)
-                "grid_ok": pw.grid_status() == "UP"}
+                "grid_ok": _pw.grid_status() == "UP"}
     except Exception:
+        _pw = None    # drop cached handle so the next tick reconnects
         return None
 
 
@@ -92,6 +97,7 @@ class Controller:
         self.since = datetime.now(TZ).isoformat(timespec="seconds")
         self.last_boundary = None
         self.early_closed = False
+        self.last = None                # cached gateway snapshot (soc/grid_ok) from _tick
         self.relay.close_grid()         # boot = assert safe state
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -121,15 +127,18 @@ class Controller:
         return self.state()
 
     def state(self):
-        s = read_state()
+        s = self.last or {}              # cached (no live gateway call -> fast response)
         return {
             "position": self.relay.position(),   # TRUE pole state from aux
             "commanded": self.commanded,
             "mode": self.mode,
             "reason": self.reason,
             "since": self.since,
-            "soc": (s or {}).get("soc"),
-            "grid_ok": (s or {}).get("grid_ok"),
+            "soc": s.get("soc"),
+            "grid_ok": s.get("grid_ok"),
+            "peak_start": PEAK_START.strftime("%H:%M"),   # island-on time
+            "peak_end": PEAK_END.strftime("%H:%M"),       # grid-on time
+            "floor_pct": FLOOR_PCT,
         }
 
     # -- scheduler --
@@ -142,9 +151,18 @@ class Controller:
             time.sleep(POLL_S)
 
     def _tick(self):
+        snap = read_state()             # one gateway read per tick; cache for /state
+        if snap is not None:
+            self.last = snap
+        self.evaluate()                 # decide + apply from the cached snapshot
+
+    def evaluate(self):
+        """Decide the relay state from the current schedule + cached snapshot and
+        apply it NOW. Called every tick AND immediately after /config so a time
+        change takes effect at once instead of waiting up to POLL_S."""
         now = datetime.now(TZ)
         boundary = "peak" if in_peak(now) else "offpeak"
-        if boundary != self.last_boundary:         # crossed 17:00 or 09:00
+        if boundary != self.last_boundary:         # crossed a window edge
             self.last_boundary = boundary
             self.early_closed = False
             self.mode = "auto"                      # manual override lasts <= to next edge
@@ -156,7 +174,7 @@ class Controller:
             return
 
         # inside peak window
-        s = read_state()
+        s = self.last
         if s is not None and self.commanded == "closed" and s["soc"] < MIN_SOC:
             return                                  # too low to bother islanding
         if s is not None and not s.get("grid_ok", True) and self.commanded == "closed":
@@ -203,6 +221,22 @@ def api_close(authorization: str = Header(None)):
 def api_auto(authorization: str = Header(None)):
     _auth(authorization)
     return ctl.set_auto()
+
+
+@app.post("/config")
+def api_config(cfg: dict, authorization: str = Header(None)):
+    """Set island/grid times + floor at runtime. Body: {peak_start, peak_end, floor_pct}.
+    Runtime-only (reverts to env on restart); HA re-pushes on start to persist."""
+    _auth(authorization)
+    global PEAK_START, PEAK_END, FLOOR_PCT
+    if cfg.get("peak_start"):
+        PEAK_START = _parse_hhmm(cfg["peak_start"], PEAK_START)
+    if cfg.get("peak_end"):
+        PEAK_END = _parse_hhmm(cfg["peak_end"], PEAK_END)
+    if cfg.get("floor_pct") is not None:
+        FLOOR_PCT = float(cfg["floor_pct"])
+    ctl.evaluate()                      # apply the new window immediately (no wait)
+    return ctl.state()
 
 
 @app.get("/state")

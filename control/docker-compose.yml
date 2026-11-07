@@ -1,16 +1,19 @@
-# arb-controller — deploy on the controller Pi:
-#   cp .env.example .env   &&   nano .env     # set ARB_TOKEN
-#   docker compose up -d --build
+# arb-controller — deploy on the controller Pi with docker compose.
+# PULL-based: the image is built + pushed from the Mac (build_push.sh); the Pi
+# only pulls it. Place this file + .env on the Pi once; thereafter:
+#   docker compose pull && docker compose up -d      # get + run the latest image
 #   docker compose logs -f
 services:
   arb-controller:
-    build: .
+    image: jwkidd3/arb-controller:latest
     container_name: arb-controller
     restart: unless-stopped
-    # host networking: reach the gateway AP (192.168.91.1) via the Pi's wlan0,
-    # and bind 8676 on the LAN for HA. (Same reason the proxy needs the AP.)
-    network_mode: host
-    env_file: .env                 # ARB_TOKEN (and optional GW_PWD) live here, uncommitted
+    # Bridge + published port (like the pypowerwall proxy). Listens on 8677
+    # (8676 is taken by weather411). Reaches the gateway AP 192.168.91.1 via
+    # host routing, same as the proxy does.
+    ports:
+      - "8677:8677"
+    env_file: .env                 # ARB_TOKEN (and optional GW_PWD), uncommitted
     environment:
       ARB_SIM: "1"                 # TEST: simulated switch, no GPIO/740. REMOVE for real hardware.
       GW_IP: "192.168.91.1"
@@ -20,9 +23,9 @@ services:
       MIN_SOC: "50"
       TZ: "America/Chicago"
       # GPIOZERO_PIN_FACTORY: "lgpio"   # uncomment with the real 740
-    # --- REAL 740 only: GPIO passthrough (uncomment when wiring the relay) ---
+    # --- REAL 740: uncomment these + the GPIOZERO_PIN_FACTORY line above, and
+    #     REMOVE the ARB_SIM line. Also uncomment gpiozero/lgpio in requirements.txt
+    #     and rebuild/push. (Container runs as root, so no group_add is needed.) ---
     # devices:
     #   - /dev/gpiochip0:/dev/gpiochip0
     #   - /dev/gpiomem:/dev/gpiomem
-    # group_add:
-    #   - gpio
