@@ -41,6 +41,9 @@ class Relay:
     def position(self):
         return self._position
 
+    def heartbeat(self):
+        pass                # no-op in sim (no watchdog line)
+
 
 if __name__ == "__main__":
     import sys

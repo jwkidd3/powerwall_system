@@ -1,0 +1,14 @@
+[Unit]
+Description=Assert 740 CLOSED (grid, safe state) at boot, before Docker
+DefaultDependencies=no
+After=local-fs.target
+Before=docker.service multi-user.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/boot_assert_close.sh
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

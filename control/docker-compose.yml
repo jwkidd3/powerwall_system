@@ -15,17 +15,17 @@ services:
       - "8677:8677"
     env_file: .env                 # ARB_TOKEN (and optional GW_PWD), uncommitted
     environment:
-      ARB_SIM: "1"                 # TEST: simulated switch, no GPIO/740. REMOVE for real hardware.
+    #  ARB_SIM: "1"                 # TEST: simulated switch, no GPIO/740. REMOVE for real hardware.
       GW_IP: "192.168.91.1"
       PEAK_START: "17:00"          # Free Days 12: island when the paid window starts
       PEAK_END: "09:00"            # close for the free charge window (wraps midnight)
       FLOOR_PCT: "10"              # stop discharging at 10% SOC
       MIN_SOC: "50"
       TZ: "America/Chicago"
-      # GPIOZERO_PIN_FACTORY: "lgpio"   # uncomment with the real 740
+      GPIOZERO_PIN_FACTORY: "lgpio"   # uncomment with the real 740
     # --- REAL 740: uncomment these + the GPIOZERO_PIN_FACTORY line above, and
     #     REMOVE the ARB_SIM line. Also uncomment gpiozero/lgpio in requirements.txt
     #     and rebuild/push. (Container runs as root, so no group_add is needed.) ---
-    # devices:
-    #   - /dev/gpiochip0:/dev/gpiochip0
-    #   - /dev/gpiomem:/dev/gpiomem
+    devices:
+      - /dev/gpiochip0:/dev/gpiochip0
+      - /dev/gpiochip4:/dev/gpiochip4

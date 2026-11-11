@@ -146,6 +146,7 @@ class Controller:
         while True:
             try:
                 self._tick()
+                self.relay.heartbeat()      # pet the hardware watchdog (control loop alive)
             except Exception as e:
                 print("tick error:", e, flush=True)
             time.sleep(POLL_S)

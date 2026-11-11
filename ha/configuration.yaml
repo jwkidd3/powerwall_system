@@ -1,3 +1,10 @@
+# Home Assistant configuration.yaml — cleaned (duplicate keys removed)
+# Changes vs your version:
+#   - merged the TWO rest_command: blocks into one (arb_config was being erased)
+#   - removed the duplicate /state rest resource; added island-at/grid-at read-back sensors
+#   - removed the duplicate template binary_sensor block
+#   - "Arb push config" automation goes in automations.yaml (see note at bottom)
+
 # Loads default set of integrations. Do not remove.
 default_config:
 
@@ -12,7 +19,49 @@ automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
 
+input_datetime:
+  arb_island_time: {name: "Island on (paid start)", has_date: false, has_time: true}
+  arb_grid_time:   {name: "Grid on (free start)",   has_date: false, has_time: true}
+input_number:
+  arb_floor_pct:   {name: "Discharge floor", min: 0, max: 50, step: 1, unit_of_measurement: "%"}
+  arb_paid_rate:   {name: "Paid rate", min: 0, max: 1, step: 0.001, unit_of_measurement: "USD/kWh", mode: box}
+  arb_free_rate:   {name: "Free rate", min: 0, max: 1, step: 0.001, unit_of_measurement: "USD/kWh", mode: box}
+
+# ── ONE rest_command block (all four commands) ─────────────────────────────
+rest_command:
+  arb_open:
+    url: "http://192.168.10.101:8677/open"
+    method: POST
+    headers: {authorization: !secret arb_token_bearer}
+  arb_close:
+    url: "http://192.168.10.101:8677/close"
+    method: POST
+    headers: {authorization: !secret arb_token_bearer}
+  arb_auto:
+    url: "http://192.168.10.101:8677/auto"
+    method: POST
+    headers: {authorization: !secret arb_token_bearer}
+  arb_config:
+    url: "http://192.168.10.101:8677/config"
+    method: POST
+    headers: {authorization: !secret arb_token_bearer, content-type: application/json}
+    payload: >-
+      {"peak_start": "{{ states('input_datetime.arb_island_time')[:5] }}",
+       "peak_end": "{{ states('input_datetime.arb_grid_time')[:5] }}",
+       "floor_pct": {{ states('input_number.arb_floor_pct') | int(10) }}}
+
 rest:
+  # ── 740 controller state (ONE block; includes live time read-back) ────────
+  - resource: "http://192.168.10.101:8677/state"
+    method: GET
+    headers: {authorization: !secret arb_token_bearer}
+    scan_interval: 15
+    sensor:
+      - {name: "Arb 740 position",  unique_id: arb_position,   value_template: "{{ value_json.position }}"}
+      - {name: "Arb 740 mode",      unique_id: arb_mode,       value_template: "{{ value_json.mode }}"}
+      - {name: "Arb 740 island at", unique_id: arb_peak_start, value_template: "{{ value_json.peak_start }}"}
+      - {name: "Arb 740 grid at",   unique_id: arb_peak_end,   value_template: "{{ value_json.peak_end }}"}
+
   - resource: "https://www.ercot.com/api/1/services/read/dashboards/daily-prc.json"
     scan_interval: 300
     timeout: 60
@@ -36,6 +85,7 @@ rest:
         icon: mdi:flash
         value_template: >
           {{ value_json.get('current_condition', {}).get('prc_value', '0') | replace(',', '') | int(0) }}
+
   - resource: http://192.168.10.101:8675/api/meters/aggregates
     scan_interval: 30
     timeout: 5
@@ -58,6 +108,7 @@ rest:
         unit_of_measurement: W
         device_class: power
         state_class: measurement
+
   - resource: http://192.168.10.101:8675/api/system_status/soe
     scan_interval: 65
     timeout: 5
@@ -68,6 +119,7 @@ rest:
         unit_of_measurement: "%"
         device_class: battery
         state_class: measurement
+
   - resource: http://192.168.10.101:8675/api/system_status/grid_status
     scan_interval: 125
     timeout: 5
@@ -75,6 +127,7 @@ rest:
       - name: "Powerwall Grid Status"
         unique_id: pw_grid_status
         value_template: "{{ 'On Grid' if value_json.grid_status == 'SystemGridConnected' else 'Off Grid' }}"
+
   - resource: http://192.168.10.101:8675/pod
     scan_interval: 70
     timeout: 5
@@ -95,6 +148,7 @@ rest:
         unique_id: pw_reserve_percent
         value_template: "{{ value_json.backup_reserve_percent | round(0) }}"
         unit_of_measurement: "%"
+
   - resource: http://192.168.10.101:8675/api/operation
     scan_interval: 305
     timeout: 5
@@ -107,26 +161,27 @@ rest:
              else 'Self-Powered' if m == 'self_consumption'
              else 'Time-Based' if m == 'autonomous'
              else m }}
-  - resource: http://192.168.10.101:8675/alerts
-    scan_interval: 115
-    timeout: 5
-    sensor:
-      - name: "Powerwall Alerts"
-        unique_id: pw_alerts
-        value_template: "{{ value_json | count }}"
-      - name: "Powerwall Alert List"
-        unique_id: pw_alert_list
-        value_template: >-
-          {{ (value_json | join('\n')) if (value_json | count) > 0 else 'No active alerts' }}
 
 template:
+  - sensor:
+      - name: "Arb grid link"
+        unique_id: arb_grid_link
+        state: "{{ 'Off-grid (on battery)' if is_state('sensor.arb_740_position','open') else 'On grid' }}"
+  - binary_sensor:
+      - name: "Arb Islanded"
+        unique_id: arb_islanded
+        state: "{{ states('sensor.arb_740_position') == 'open' }}"
+      - name: "Arb Manual Override"
+        unique_id: arb_manual
+        state: "{{ states('sensor.arb_740_mode') == 'manual' }}"
   - sensor:
       - name: "Import Price"
         unique_id: import_price
         unit_of_measurement: "USD/kWh"
         state: >
           {% set h = now().hour %}
-          {{ 0 if (h >= 21 or h < 6) else 0.18 }}
+          {{ states('input_number.arb_free_rate') | float(0) if (9 <= h < 17)
+             else states('input_number.arb_paid_rate') | float(0.249) }}
   - sensor:
       - name: "Main Panel Amps"
         unit_of_measurement: "A"
@@ -153,18 +208,16 @@ template:
         icon: mdi:clock-outline
         state: >
           {% set h = now().hour %}
-          {% if 18 <= h < 21 %} Peak
-          {% elif h >= 21 or h < 6 %} Free
-          {% else %} Standard
-          {% endif %}
-      - name: "Arbitrage Savings (Today)"     
+          {{ 'Free' if (9 <= h < 17) else 'Paid' }}   {# Free Days 12 #}
+      - name: "Arbitrage Savings (Today)"
         unique_id: arb_savings_today
         unit_of_measurement: "USD"
         device_class: monetary
         state_class: total
         icon: mdi:cash-fast
         state: >
-          {{ (states('sensor.battery_discharge_daily_peak') | float(0) * 0.18) | round(2) }}
+          {{ (states('sensor.battery_discharge_daily_peak') | float(0)
+              * (states('input_number.arb_paid_rate') | float(0.249))) | round(2) }}
       - name: "Arbitrage Savings (Month)"
         unique_id: arb_savings_month
         unit_of_measurement: "USD"
@@ -172,7 +225,8 @@ template:
         state_class: total
         icon: mdi:cash
         state: >
-          {{ (states('sensor.battery_discharge_tou_peak') | float(0) * 0.18) | round(2) }}
+          {{ (states('sensor.battery_discharge_tou_peak') | float(0)
+              * (states('input_number.arb_paid_rate') | float(0.249))) | round(2) }}
       - name: "Grid Import Power"
         unique_id: grid_import_w
         unit_of_measurement: W
@@ -253,24 +307,58 @@ sensor:
       minutes: 1
 
 utility_meter:
+  # Free Days 12: two buckets only. "peak" = the PAID window (5pm-9am),
+  # "free" = 9am-5pm. Switched by the "TOU tariff" automations.
   grid_import_tou:
     source: sensor.grid_imported
     cycle: monthly
     tariffs:
       - peak
-      - standard
       - free
   battery_discharge_tou:
     source: sensor.battery_discharged
     cycle: monthly
     tariffs:
       - peak
-      - standard
       - free
   battery_discharge_daily:
     source: sensor.battery_discharged
     cycle: daily
     tariffs:
       - peak
-      - standard
       - free
+
+# ───────────────────────────────────────────────────────────────────────────
+# ADD THESE TWO to automations.yaml (NOT here — automation is !include'd above).
+# Append each as a top-level list item.
+#
+# Times are pushed to the controller by the Apply-times button (script.arb_apply_times);
+# this one just re-syncs after an HA restart.
+# - alias: "Arb push config on HA start"
+#   trigger:
+#     - platform: homeassistant
+#       event: start
+#   action:
+#     - delay: "00:00:10"
+#     - service: rest_command.arb_config
+#
+# Flip the TOU buckets: free 9am-5pm, paid (peak) 5pm-9am. Self-corrects on restart.
+# - alias: "TOU tariff switch"
+#   trigger:
+#     - platform: time
+#       at: "09:00:00"
+#     - platform: time
+#       at: "17:00:00"
+#     - platform: homeassistant
+#       event: start
+#   action:
+#     - variables:
+#         tar: "{{ 'free' if (9 <= now().hour < 17) else 'peak' }}"
+#     - service: select.select_option
+#       target:
+#         entity_id:
+#           - select.grid_import_tou
+#           - select.battery_discharge_tou
+#           - select.battery_discharge_daily
+#       data:
+#         option: "{{ tar }}"

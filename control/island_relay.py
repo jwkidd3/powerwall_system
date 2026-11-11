@@ -16,6 +16,7 @@ import threading
 import time
 
 SET_PIN, RESET_PIN, AUX_PIN = 17, 27, 22
+HB_PIN = 23                         # heartbeat out -> hardware watchdog (Pico). Toggles each tick.
 PULSE_S = 0.08                      # 80 ms (datasheet min 30 ms; margin)
 # Set at bench step 6: True if aux reads "pressed" (NO closed to GND) when the
 # MAIN poles are CLOSED. Flip if your aux wiring/polarity turns out inverted.
@@ -31,6 +32,7 @@ class Relay:
         self._set = OutputDevice(SET_PIN, active_high=False, initial_value=False)
         self._reset = OutputDevice(RESET_PIN, active_high=False, initial_value=False)
         self._aux = Button(AUX_PIN, pull_up=True)
+        self._hb = OutputDevice(HB_PIN, initial_value=False)   # watchdog heartbeat
 
     def _pulse(self, dev):
         # interlock: never energize both coils at once; one pulse at a time
@@ -52,6 +54,11 @@ class Relay:
         pressed = self._aux.is_pressed
         closed = pressed if AUX_CLOSED_WHEN_PRESSED else (not pressed)
         return "closed" if closed else "open"
+
+    def heartbeat(self):
+        """Toggle the watchdog line. Called every scheduler tick; if the control
+        loop hangs this stops toggling and the hardware watchdog forces CLOSE."""
+        self._hb.toggle()
 
 
 if __name__ == "__main__":

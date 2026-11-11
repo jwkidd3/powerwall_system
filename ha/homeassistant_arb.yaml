@@ -1,53 +1,88 @@
-# Home Assistant — Plan B 740 controller integration
-# Pi reachable on the LAN/tailnet at http://<pi-ip>:8676
-# Store the token in secrets.yaml:   arb_token_bearer: "Bearer the-same-token-as-ARB_TOKEN"
-
-# --- buttons (open / close / back-to-auto) ---------------------------------
-rest_command:
-  arb_open:
-    url: "http://192.168.10.101:8676/open"
-    method: POST
-    headers:
-      authorization: !secret arb_token_bearer     # e.g. "Bearer xxxxx"
-  arb_close:
-    url: "http://192.168.10.101:8676/close"
-    method: POST
-    headers:
-      authorization: !secret arb_token_bearer
-  arb_auto:
-    url: "http://192.168.10.101:8676/auto"
-    method: POST
-    headers:
-      authorization: !secret arb_token_bearer
-
-# --- state (position / mode / soc) polled every 30 s -----------------------
-rest:
-  - resource: "http://192.168.10.101:8676/state"
-    method: GET
-    headers:
-      authorization: !secret arb_token_bearer
-    scan_interval: 30
-    sensor:
-      - name: "Arb 740 position"
-        value_template: "{{ value_json.position }}"     # open | closed
-      - name: "Arb 740 mode"
-        value_template: "{{ value_json.mode }}"         # auto | manual
-      - name: "Arb battery SOC"
-        value_template: "{{ value_json.soc }}"
-        unit_of_measurement: "%"
-
-# --- example: dashboard buttons --------------------------------------------
-# Add to a Lovelace dashboard:
-#   type: entities
-#   entities:
-#     - entity: sensor.arb_740_position
-#     - entity: sensor.arb_740_mode
-#     - entity: sensor.arb_battery_soc
-#   footer:
-#     type: buttons
-#     entities: []        # use button cards calling rest_command.arb_open / _close / _auto
+# Home Assistant — Plan B 740 controller integration  (controller @ 192.168.10.101:8677)
 #
-# Or a script/automation:
-#   action: rest_command.arb_open      # island now (manual; auto-resumes next edge)
-#   action: rest_command.arb_close     # grid now
-#   action: rest_command.arb_auto      # hand back to the schedule
+# MERGE into /config/configuration.yaml by top-level key (you already have some of these):
+#   rest_command:   -> you don't have one; paste whole
+#   rest:           -> add the `- resource:` item under your EXISTING rest: list
+#   template:       -> add the `- binary_sensor:` item under your EXISTING template: list
+#   input_datetime: / input_number: / automation:  -> merge under those keys (or add if absent)
+# secrets.yaml:  arb_token_bearer: "Bearer <ARB_TOKEN from the Pi's ~/.env>"
+# Then restart HA.
+
+rest_command:
+  arb_open:   {url: "http://192.168.10.101:8677/open",  method: POST, headers: {authorization: !secret arb_token_bearer}}
+  arb_close:  {url: "http://192.168.10.101:8677/close", method: POST, headers: {authorization: !secret arb_token_bearer}}
+  arb_auto:   {url: "http://192.168.10.101:8677/auto",  method: POST, headers: {authorization: !secret arb_token_bearer}}
+  arb_config:
+    url: "http://192.168.10.101:8677/config"
+    method: POST
+    headers: {authorization: !secret arb_token_bearer, content-type: application/json}
+    payload: >-
+      {"peak_start": "{{ states('input_datetime.arb_island_time')[:5] }}",
+       "peak_end": "{{ states('input_datetime.arb_grid_time')[:5] }}",
+       "floor_pct": {{ states('input_number.arb_floor_pct') | int(10) }}}
+
+# ── add under existing `rest:` ─────────────────────────────────────────────
+  - resource: "http://192.168.10.101:8677/state"
+    method: GET
+    headers: {authorization: !secret arb_token_bearer}
+    scan_interval: 15
+    sensor:
+      - {name: "Arb 740 position", unique_id: arb_position, value_template: "{{ value_json.position }}"}
+      - {name: "Arb 740 mode",     unique_id: arb_mode,     value_template: "{{ value_json.mode }}"}
+      # live times the controller is ACTUALLY running on (read-back confirmation):
+      - {name: "Arb 740 island at", unique_id: arb_peak_start, value_template: "{{ value_json.peak_start }}"}
+      - {name: "Arb 740 grid at",   unique_id: arb_peak_end,   value_template: "{{ value_json.peak_end }}"}
+    # SOC: reuse sensor.powerwall_battery (proxy). Controller reads SOC internally for the floor.
+
+# ── add under existing `template:` ─────────────────────────────────────────
+  - sensor:
+      # plain-text grid state so the card reads clearly (not On/Off)
+      - name: "Arb grid link"
+        unique_id: arb_grid_link
+        state: "{{ 'Off-grid (on battery)' if is_state('sensor.arb_740_position','open') else 'On grid' }}"
+  - binary_sensor:
+      - {name: "Arb Islanded", unique_id: arb_islanded, state: "{{ states('sensor.arb_740_position') == 'open' }}"}
+      - {name: "Arb Manual Override", unique_id: arb_manual, state: "{{ states('sensor.arb_740_mode') == 'manual' }}"}
+
+# ── setpoints (editable in HA) ─────────────────────────────────────────────
+input_datetime:
+  arb_island_time: {name: "Island on (paid start)", has_date: false, has_time: true}
+  arb_grid_time:   {name: "Grid on (free start)",   has_date: false, has_time: true}
+input_number:
+  arb_floor_pct:   {name: "Discharge floor", min: 0, max: 50, step: 1, unit_of_measurement: "%"}
+
+# ── push setpoints to the controller on change + on HA start ───────────────
+automation:
+  - alias: "Arb push config"
+    trigger:
+      - platform: state
+        entity_id: [input_datetime.arb_island_time, input_datetime.arb_grid_time, input_number.arb_floor_pct]
+      - platform: homeassistant
+        event: start
+    action:
+      - delay: "00:00:05"
+      - service: rest_command.arb_config
+
+# ── Lovelace card (Edit dashboard -> + Add Card -> Manual) ─────────────────
+# type: vertical-stack
+# cards:
+#   - type: entities
+#     title: Arbitrage 740
+#     entities:
+#       - {entity: sensor.arb_grid_link, name: Grid}            # "On grid" / "Off-grid (on battery)"
+#       - {entity: sensor.arb_740_mode, name: Mode}             # auto / manual
+#       - {entity: sensor.powerwall_battery, name: Battery SOC}
+#       # full-width headers so the time labels never truncate:
+#       - {type: section, label: "Go off-grid at — Central (CST/CDT), paid window start"}
+#       - {entity: input_datetime.arb_island_time, name: Set}
+#       - {entity: sensor.arb_740_island_at, name: Controller running, icon: mdi:check-circle-outline}
+#       - {type: section, label: "Back on grid at — Central (CST/CDT), free window start"}
+#       - {entity: input_datetime.arb_grid_time, name: Set}
+#       - {entity: sensor.arb_740_grid_at, name: Controller running, icon: mdi:check-circle-outline}
+#       - {type: section, label: "Discharge floor"}
+#       - {entity: input_number.arb_floor_pct, name: " "}
+#   - type: horizontal-stack
+#     cards:
+#       - {type: button, name: Go off-grid, icon: mdi:transmission-tower-off, tap_action: {action: perform-action, perform_action: script.arb_island}}
+#       - {type: button, name: Back on grid, icon: mdi:transmission-tower,    tap_action: {action: perform-action, perform_action: script.arb_grid}}
+#       - {type: button, name: Auto,         icon: mdi:autorenew,             tap_action: {action: perform-action, perform_action: script.arb_auto}}

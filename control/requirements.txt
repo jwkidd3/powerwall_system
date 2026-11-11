@@ -2,5 +2,5 @@ fastapi
 uvicorn[standard]
 pypowerwall
 # --- for the REAL 740 (GPIO) ---  uncomment when you drop ARB_SIM
-# gpiozero
-# lgpio
+gpiozero
+lgpio

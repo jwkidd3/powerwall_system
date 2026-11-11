@@ -1,3 +1,11 @@
+- alias: "Arb push config on HA start"
+  trigger:
+    - platform: homeassistant
+      event: start
+  action:
+    - delay: "00:00:10"
+    - service: rest_command.arb_config
+
 - id: '1698885446051'
   alias: Pool-Cold Temp
   description: ''
@@ -14,19 +22,19 @@
     target:
       entity_id: switch.mainpool
   mode: single
+
 - id: tou_tariff_switch
   alias: "TOU tariff switch"
   trigger:
     - platform: time
-      at: "06:00:00"
-      id: standard
+      at: "09:00:00"
     - platform: time
-      at: "18:00:00"
-      id: peak
-    - platform: time
-      at: "21:00:00"
-      id: free
+      at: "17:00:00"
+    - platform: homeassistant
+      event: start
   action:
+    - variables:
+        tar: "{{ 'free' if (9 <= now().hour < 17) else 'peak' }}"
     - service: select.select_option
       target:
         entity_id:
@@ -34,4 +42,4 @@
           - select.battery_discharge_tou
           - select.battery_discharge_daily
       data:
-        option: "{{ trigger.id }}"
+        option: "{{ tar }}"
