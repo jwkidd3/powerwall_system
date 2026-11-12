@@ -1,0 +1,188 @@
+# Emporia Vue Gen3 — GENERATION PANEL unit (emporia-3).
+#
+# Main CTs A and B: the two hot 1/0 conductors of the 150A feeder leaving the
+# gen panel toward the IVDD / backup-panel 150A backfeed breaker.
+# Branch CTs 1-5: one hot conductor of each Powerwall's 30A 2P breaker.
+# Voltage leads land on two stacked breakers in the gen panel; white + blue to
+# the neutral bar.
+#
+# SIGN CONVENTION (all CTs here are signed — no *pos filter):
+#   Point every CT arrow ("Breaker ->") AWAY from the Powerwalls / toward the
+#   backup panel:
+#     positive power = batteries discharging into the house
+#     negative power = house charging the batteries
+#   If discharge reads negative, flip the CT.
+#
+# Each Powerwall is 240V on a 2-pole breaker but a single CT sees ONE leg,
+# so the branch CTs use `multiply: 2`.
+esphome:
+  name: emporia-3
+  friendly_name: Emporia 3
+
+external_components:
+  - source: github://emporia-vue-local/esphome@dev
+    components:
+      - emporia_vue
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: recommended
+
+logger:
+  logs:
+    sensor: INFO
+api:
+ota:
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+
+captive_portal:
+
+preferences:
+  # the default of 1min is far too short--flash chip is rated
+  # for approx 100k writes.
+  flash_write_interval: "48h"
+
+i2c:
+  sda:
+    number: 5
+    ignore_strapping_warning: true
+  scl: 18
+  scan: false
+  frequency: 400kHz
+  timeout: 1ms
+  id: i2c_a
+
+switch:
+  - platform: restart
+    name: Restart
+
+time:
+  - platform: homeassistant
+
+light:
+  - platform: status_led
+    id: wifi_led
+    pin:
+      number: 2
+      ignore_strapping_warning: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: status_led
+    id: ethernet_led
+    pin: 4
+    restore_mode: ALWAYS_OFF
+
+# these are called references in YAML. They allow you to reuse
+# this configuration in each sensor, while only defining it once
+.defaultfilters:
+  - &moving_avg
+    # we capture a new sample every 0.24 seconds, so the time can
+    # be calculated from the number of samples as n * 0.24.
+    sliding_window_moving_average:
+      # we average over the past 2.88 seconds
+      window_size: 24
+      # we push a new value every 1.44 seconds
+      send_every: 12
+  - &pos
+    # filter out any values below 0.
+    lambda: 'return max(x, 0.0f);'
+
+sensor:
+  - platform: emporia_vue
+    variant: vue3
+    i2c_id: i2c_a
+    phases:
+      - id: phase_a  # BLACK (L1) voltage lead
+        input: BLACK
+        calibration: 0.0194  # tune: <in-use calibration> * <accurate voltage> / <reporting voltage>
+        voltage:
+          name: "Phase R Voltage"
+          filters: [*moving_avg, *pos]
+      - id: phase_b  # RED (L2) voltage lead
+        input: RED
+        calibration: 0.0194
+        voltage:
+          name: "Phase L Voltage"
+          filters: [*moving_avg, *pos]
+    ct_clamps:
+      # --- 150A feeder to IVDD / backup panel (signed) ---
+      # Set phase_id to the leg each 1/0 conductor is on.
+      - phase_id: phase_a
+        input: "A"
+        power:
+          name: "Gen Feeder Phase R Power"
+          id: phase_a_power
+          device_class: power
+          filters: [*moving_avg]
+      - phase_id: phase_b
+        input: "B"
+        power:
+          name: "Gen Feeder Phase L Power"
+          id: phase_b_power
+          device_class: power
+          filters: [*moving_avg]
+      # --- Powerwalls 1-5 (signed, x2 for the unmeasured leg) ---
+      # phase_id = the leg of the conductor each CT is clamped on.
+      - { phase_id: phase_a, input: "1", power: { name: "Powerwall 1 Power", id: pw1, device_class: power, filters: [ *moving_avg, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "2", power: { name: "Powerwall 2 Power", id: pw2, device_class: power, filters: [ *moving_avg, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "3", power: { name: "Powerwall 3 Power", id: pw3, device_class: power, filters: [ *moving_avg, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "4", power: { name: "Powerwall 4 Power", id: pw4, device_class: power, filters: [ *moving_avg, multiply: 2 ] } }
+      - { phase_id: phase_a, input: "5", power: { name: "Powerwall 5 Power", id: pw5, device_class: power, filters: [ *moving_avg, multiply: 2 ] } }
+
+  # Net power on the 150A feeder: + batteries -> house, - house -> batteries.
+  - platform: template
+    name: "Gen Feeder Power"
+    id: gen_feeder_power
+    lambda: return id(phase_a_power).state + id(phase_b_power).state;
+    update_interval: 10s
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  # Sum of the five Powerwall CTs, for comparison against the feeder.
+  - platform: template
+    name: "Powerwalls Total Power"
+    id: pw_total_power
+    lambda: return id(pw1).state + id(pw2).state + id(pw3).state + id(pw4).state + id(pw5).state;
+    update_interval: 10s
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  # Split the feeder into two positive sensors so energy integrates per direction.
+  - platform: template
+    name: "Gen Feeder Discharge Power"
+    id: gen_discharge_power
+    lambda: |-
+      if (isnan(id(gen_feeder_power).state)) return NAN;
+      return max(id(gen_feeder_power).state, 0.0f);
+    update_interval: 10s
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+  - platform: template
+    name: "Gen Feeder Charge Power"
+    id: gen_charge_power
+    lambda: |-
+      if (isnan(id(gen_feeder_power).state)) return NAN;
+      return max(-id(gen_feeder_power).state, 0.0f);
+    update_interval: 10s
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+
+  - platform: total_daily_energy
+    name: "Gen Feeder Discharge Daily Energy"
+    power_id: gen_discharge_power
+    accuracy_decimals: 0
+  - platform: total_daily_energy
+    name: "Gen Feeder Charge Daily Energy"
+    power_id: gen_charge_power
+    accuracy_decimals: 0
