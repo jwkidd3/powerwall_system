@@ -1,0 +1,184 @@
+<meta charset="utf-8">
+<title>Emporia CT Directory</title>
+<style>
+  :root{
+    --ink:#000; --rule:#000; --hair:#8a8a8a;
+    --label-w:7.5in; --row-h:.3in;
+    --body: "Helvetica Neue", "Arial Narrow", Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:#d9d6d0; font-family:var(--body); color:var(--ink);
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;}
+
+  .bar{position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:1.25rem; align-items:flex-end;
+    padding:.9rem 1.25rem; background:#1c1c1c; color:#f2f2f2; font-size:.8rem; line-height:1.2;}
+  .bar h1{font-size:.95rem; font-weight:600; margin:0 1rem 0 0; align-self:center;}
+  .bar label{display:flex; flex-direction:column; gap:.3rem;}
+  .bar span{color:#b6b2ab; font-size:.7rem;}
+  .bar input{font:inherit; font-size:.8rem; padding:.25rem .35rem; border:1px solid #4a4a4a;
+    background:#2b2b2b; color:#f2f2f2; border-radius:2px; width:5.5rem;}
+  .bar button{font:inherit; font-size:.8rem; padding:.4rem .9rem; background:#f2f2f2; color:#1c1c1c;
+    border:0; border-radius:2px; cursor:pointer;}
+  .bar .note{color:#b6b2ab; max-width:22rem; align-self:center;}
+
+  .stage{padding:1.5rem; display:flex; flex-direction:column; align-items:center; gap:1.5rem;}
+
+  .label{width:var(--label-w); background:#fff; border:1.5pt solid var(--rule);
+    display:flex; flex-direction:column; overflow:hidden; break-inside:avoid;}
+  .head{border-bottom:1.5pt solid var(--rule); padding:.08in .12in; display:flex;
+    justify-content:space-between; align-items:baseline; gap:.15in;}
+  .head .who{font-size:11pt; font-weight:700;}
+  .head .spec{font-size:7pt; margin-top:.02in;}
+
+  .grid{display:flex;}
+  .col{flex:1 1 50%; display:flex; flex-direction:column;}
+  .col.left{border-right:1.25pt solid var(--rule);}
+  .col.solo{flex-basis:100%;}
+
+  .row{flex:0 0 var(--row-h); display:flex; align-items:stretch;
+    border-bottom:.5pt solid var(--hair); font-size:12pt; line-height:1;}
+  .row:last-child{border-bottom:.5pt solid var(--hair);}
+  .row.hdr{flex:0 0 .18in; border-bottom:1pt solid var(--rule); font-size:6pt; font-weight:700; letter-spacing:.06em;}
+  .row.main .desc{font-weight:700;}
+
+  .cell{padding:0 .05in; display:flex; align-items:center; min-width:0;
+    border-right:.5pt solid var(--hair);}
+  .port{flex:0 0 .45in; justify-content:center; font-weight:700; background:#e8e8e8;}
+  .num{flex:0 0 .45in; justify-content:center; font-variant-numeric:tabular-nums;}
+  .amp{flex:0 0 .45in; justify-content:center; font-variant-numeric:tabular-nums;}
+  .desc{flex:1 1 auto; overflow:hidden; white-space:nowrap;}
+
+  [contenteditable]:focus{outline:1.5px solid #2b6cb0; outline-offset:-1px; background:#fffbe6;}
+
+  .foot{border-top:1.5pt solid var(--rule); padding:.04in .12in; font-size:6pt;}
+
+  @media print{
+    body{background:#fff;}
+    .bar{display:none;}
+    .stage{padding:0; gap:.3in;}
+    @page{size:letter portrait; margin:.5in;}
+  }
+</style>
+
+<div class="bar">
+  <h1>Emporia CT directory</h1>
+  <label>Width (in)<input id="w" type="number" step="0.05" min="2" value="7.5"></label>
+  <label>Row height (in)<input id="h" type="number" step="0.01" min="0.1" value="0.3"></label>
+  <label>Text size (pt)<input id="fs" type="number" step="0.25" min="4" value="12"></label>
+  <label><span>&nbsp;</span><button id="clear" type="button">Reset to defaults</button></label>
+  <label><span>&nbsp;</span><button id="print" type="button">Print</button></label>
+  <p class="note">Click any field to type.</p>
+</div>
+
+<div class="stage" id="stage"></div>
+
+<script>
+  // [CT port, circuit #, amps, name]  — matches ha/esphome/CT_MAPPING.md
+  const units = [
+    { id:"e1", who:"EMPORIA 1 — BACKUP PANEL", spec:"Voltage leads: breakers 40 (black) / 41 (red) · CT arrows toward breakers", cols:2, rows:[
+      ["A","Main","—","Main — Phase A (black)"],
+      ["B","Main","—","Main — Phase B (red)"],
+      ["1","2","20","Garage plugs"],
+      ["2","3","15","MWBC (CAFI)"],
+      ["3","4","20","Kitchen outlets"],
+      ["4","5","15","Bedroom 1 & 2"],
+      ["5","6","15","Dining / front room"],
+      ["6","7","15","Lights + plugs, garage"],
+      ["7","10","15","Kitchen lights"],
+      ["8","12","20","Mud room plugs"],
+      ["9","13","15","Master BR"],
+      ["10","14","20","Kitchen island"],
+      ["11","15","15","Office"],
+      ["12","16","20","Internet"],
+      ["13","19","20","Washroom plugs"],
+      ["14","20","15","Upstairs bath"],
+      ["15","21","40","Downstairs Air"],
+      ["16","22","25","Upstairs Air"]
+    ]},
+    { id:"e2", who:"EMPORIA 2 — NON-BACKUP PANEL", spec:"Voltage leads: breakers 35 (black) / 36 (red) · CT arrows toward breakers", cols:1, rows:[
+      ["A","Main","—","Main — Phase A (black)"],
+      ["B","Main","—","Main — Phase B (red)"],
+      ["1","8","25","Pool pump"],
+      ["2","9","50","EV charger"],
+      ["3","11","30","Dryer"],
+      ["4","23","20","Sunroom mini-split"]
+    ]},
+    { id:"e3", who:"EMPORIA 3 — GEN PANEL", spec:"CT arrows toward the backup panel · + = discharge, − = charge", cols:1, rows:[
+      ["A","—","150","150A feeder — hot 1"],
+      ["B","—","150","150A feeder — hot 2"],
+      ["1","—","30","Powerwall 1"],
+      ["2","—","30","Powerwall 2"],
+      ["3","—","30","Powerwall 3"],
+      ["4","—","30","Powerwall 4"],
+      ["5","—","30","Powerwall 5"]
+    ]}
+  ];
+
+  const LS_KEY = 'emporiaDir.v1';
+  const stage = document.getElementById('stage');
+
+  function hdr(){
+    const r = document.createElement('div');
+    r.className = 'row hdr';
+    r.innerHTML = '<div class="cell port">CT</div><div class="cell num">#</div><div class="cell amp">A</div><div class="cell desc">Circuit</div>';
+    return r;
+  }
+  function row(u, c, i){
+    const r = document.createElement('div');
+    r.className = 'row' + (c[1] === 'Main' || c[1] === '—' && isNaN(c[0]) ? ' main' : '');
+    const k = u.id + '-' + i;
+    r.innerHTML =
+      '<div class="cell port">' + c[0] + '</div>' +
+      '<div class="cell num" contenteditable data-k="n-' + k + '">' + c[1] + '</div>' +
+      '<div class="cell amp" contenteditable data-k="a-' + k + '">' + c[2] + '</div>' +
+      '<div class="cell desc" contenteditable data-k="d-' + k + '">' + c[3] + '</div>';
+    return r;
+  }
+
+  units.forEach(u => {
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.innerHTML =
+      '<div class="head"><div><div class="who">' + u.who + '</div>' +
+      '<div class="spec" contenteditable data-k="s-' + u.id + '">' + u.spec + '</div></div></div>' +
+      '<div class="grid"></div>' +
+      '<div class="foot">CT = port on the Emporia · # = circuit number in the panel directory · A = breaker amps · 240V circuits: one CT, power x2</div>';
+    const grid = label.querySelector('.grid');
+    const n = u.cols;
+    const per = Math.ceil(u.rows.length / n);
+    for (let j = 0; j < n; j++){
+      const col = document.createElement('div');
+      col.className = 'col' + (n === 1 ? ' solo' : (j === 0 ? ' left' : ''));
+      col.appendChild(hdr());
+      u.rows.slice(j * per, (j + 1) * per).forEach((c, i) => col.appendChild(row(u, c, j * per + i)));
+      grid.appendChild(col);
+    }
+    stage.appendChild(label);
+  });
+
+  function save(){
+    const data = {};
+    document.querySelectorAll('[contenteditable][data-k]').forEach(el => { data[el.dataset.k] = el.textContent; });
+    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch(e){}
+  }
+  (function load(){
+    let data = {};
+    try { data = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch(e){}
+    document.querySelectorAll('[contenteditable][data-k]').forEach(el => {
+      if (el.dataset.k in data) el.textContent = data[el.dataset.k];
+    });
+  })();
+
+  document.addEventListener('input', e => { if (e.target.isContentEditable) save(); });
+  document.getElementById('w').addEventListener('input', e => document.documentElement.style.setProperty('--label-w', e.target.value + 'in'));
+  document.getElementById('h').addEventListener('input', e => document.documentElement.style.setProperty('--row-h', e.target.value + 'in'));
+  document.getElementById('fs').addEventListener('input', e => {
+    document.querySelectorAll('.row:not(.hdr)').forEach(r => r.style.fontSize = e.target.value + 'pt');
+  });
+  document.getElementById('clear').addEventListener('click', () => {
+    if (!confirm('Reset to saved defaults? Any edits you made will be cleared.')) return;
+    try { localStorage.removeItem(LS_KEY); } catch(e){}
+    location.reload();
+  });
+  document.getElementById('print').addEventListener('click', () => window.print());
+</script>
