@@ -119,7 +119,7 @@ sensor:
       # phase_id = the leg of the conductor each CT is clamped on (verify with a meter).
       # 2-pole (240V) circuits: one CT on one hot, so multiply: 2.
       - { phase_id: phase_a, input: "1", power: { name: "Circuit 8 Pool pump", id: cir8, filters: [ *moving_avg, *pos, multiply: 2 ] } }
-      - { phase_id: phase_a, input: "2", power: { name: "Circuit 9 EV charger", id: cir9, filters: [ *moving_avg, *pos, multiply: 2 ] } }
+      - { phase_id: phase_b, input: "2", power: { name: "Circuit 9 EV charger", id: cir9, filters: [ *moving_avg, *pos, multiply: 2 ] } }
       - { phase_id: phase_a, input: "3", power: { name: "Circuit 11 Dryer", id: cir11, filters: [ *moving_avg, *pos, multiply: 2 ] } }
       - { phase_id: phase_a, input: "4", power: { name: "Circuit 23 Sunroom mini-split", id: cir23, filters: [ *moving_avg, *pos, multiply: 2 ] } }
   - platform: template
