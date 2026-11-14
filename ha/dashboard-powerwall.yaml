@@ -1,0 +1,216 @@
+# Powerwall dashboard. Paste into: Dashboard -> Edit -> Raw configuration editor.
+# Needs auto-entities (Marketplace) for the Emporia cards.
+title: Powerwall
+views:
+  - title: Powerwall
+    path: powerwall
+    cards:
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.powerwall_battery
+            name: Battery
+            min: 0
+            max: 100
+            severity:
+              green: 40
+              yellow: 20
+              red: 0
+          - type: gauge
+            entity: sensor.powerwall_runtime_at_load
+            name: Hours to run
+            unit: h
+            min: 0
+            max: 24
+            severity:
+              green: 8
+              yellow: 4
+              red: 0
+
+      - type: entities
+        title: Health checks
+        entities:
+          - entity: binary_sensor.powerwall_capacity_check
+            name: Capacity (all 5 online)
+          - entity: binary_sensor.powerwall_units_reporting_check
+            name: All 5 units reporting
+          - entity: binary_sensor.powerwall_balance_check
+            name: Units balanced
+          - entity: binary_sensor.powerwall_gateway_feed_check
+            name: Gateway feed
+          - entity: binary_sensor.powerwall_emporia_cross_check
+            name: Emporia matches Tesla
+
+      - type: entities
+        title: System
+        entities:
+          - entity: sensor.powerwall_energy_remaining
+            name: Energy remaining
+          - entity: sensor.powerwall_full_pack_energy
+            name: Full pack energy
+          - entity: sensor.powerwall_reserve
+            name: Backup reserve
+          - entity: sensor.powerwall_operating_mode
+            name: Operating mode
+          - entity: sensor.powerwall_grid_status
+            name: Grid status
+          - entity: sensor.arb_740_position
+            name: 740 contactor
+          - entity: sensor.arb_grid_link
+            name: Grid link
+          - entity: sensor.electricity_period
+            name: Rate period
+          - entity: binary_sensor.powerwall_feed_healthy
+            name: Gateway feed
+          - entity: sensor.powerwall_feed_age
+            name: Feed age
+
+      - type: entities
+        title: Gateway totals
+        entities:
+          - entity: sensor.powerwall_grid_power
+            name: Grid
+          - entity: sensor.powerwall_home_load
+            name: Home load
+          - entity: sensor.powerwall_battery_power
+            name: Battery (+ discharge / - charge)
+
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: Per Powerwall - Tesla (gateway)
+            entities:
+              - entity: sensor.powerwall_1_output_power
+                name: Powerwall 1
+              - entity: sensor.powerwall_2_output_power
+                name: Powerwall 2
+              - entity: sensor.powerwall_3_output_power
+                name: Powerwall 3
+              - entity: sensor.powerwall_4_output_power
+                name: Powerwall 4
+              - entity: sensor.powerwall_5_output_power
+                name: Powerwall 5
+
+          - type: custom:auto-entities
+            card:
+              type: entities
+              title: Per Powerwall - Emporia (gen panel CTs)
+            filter:
+              include:
+                - device: Generation Panel
+                  name: "*Powerwall 1"
+                  options:
+                    name: Powerwall 1
+                - device: Generation Panel
+                  name: "*Powerwall 2"
+                  options:
+                    name: Powerwall 2
+                - device: Generation Panel
+                  name: "*Powerwall 3"
+                  options:
+                    name: Powerwall 3
+                - device: Generation Panel
+                  name: "*Powerwall 4"
+                  options:
+                    name: Powerwall 4
+                - device: Generation Panel
+                  name: "*Powerwall 5"
+                  options:
+                    name: Powerwall 5
+
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: Gen panel feeder (Emporia)
+        filter:
+          include:
+            - device: Generation Panel
+              name: Generation Panel Total Power
+              options:
+                name: Feeder total
+            - device: Generation Panel
+              name: "*Powerwalls Total Power"
+              options:
+                name: Powerwalls total (CTs)
+            - device: Generation Panel
+              name: "*Phase R Power"
+              options:
+                name: Feeder A
+            - device: Generation Panel
+              name: "*Phase L Power"
+              options:
+                name: Feeder B
+            - device: Generation Panel
+              name: "*Phase R Voltage"
+              options:
+                name: Voltage A
+            - device: Generation Panel
+              name: "*Phase L Voltage"
+              options:
+                name: Voltage B
+
+      - type: markdown
+        title: Powerwall faults (0 = healthy)
+        content: |
+          {% set rows = [
+            ('Status', 'status', 1),
+            ('Perm. fault', 'POD_PermanentlyFaulted', 1),
+            ('Persist. fault', 'POD_PersistentlyFaulted', 1),
+            ('Wobble', 'wobble_detected', 1),
+            ('Charge clamp', 'charge_power_clamped', 1)
+          ] %}
+          | | 1 | 2 | 3 | 4 | 5 |
+          |:--|:-:|:-:|:-:|:-:|:-:|
+          {% for label, k, div in rows -%}
+          | {{ label }} | {% for n in range(1, 6) -%}
+          {% set e = 'sensor.powerwall_' ~ n ~ '_status' -%}
+          {% if k == 'status' -%}{{ states(e) }}
+          {%- else -%}{% set v = state_attr(e, 'PW' ~ n ~ '_' ~ k) -%}
+          {%- if div != 1 and v is number %}{{ (v / div) | round(1) }}{% else %}{{ v }}{% endif -%}
+          {%- endif %} | {% endfor %}
+          {% endfor %}
+
+      - type: markdown
+        title: Powerwall state
+        content: |
+          {% set rows = [
+            ('Inverter', 'pinv_state', 1),
+            ('Grid state', 'pinv_grid_state', 1),
+            ('Off grid', 'off_grid', 1),
+            ('VF mode', 'vf_mode', 1),
+            ('Backup ready', 'backup_ready', 1),
+            ('Heating', 'POD_ActiveHeating', 1),
+            ('Enable line', 'POD_enable_line', 1),
+            ('Chg request', 'POD_ChargeRequest', 1),
+            ('Chg complete', 'POD_ChargeComplete', 1),
+            ('Dis complete', 'POD_DischargeComplete', 1)
+          ] %}
+          | | 1 | 2 | 3 | 4 | 5 |
+          |:--|:-:|:-:|:-:|:-:|:-:|
+          {% for label, k, div in rows -%}
+          | {{ label }} | {% for n in range(1, 6) -%}
+          {% set e = 'sensor.powerwall_' ~ n ~ '_status' -%}
+          {% if k == 'status' -%}{{ states(e) }}
+          {%- else -%}{% set v = state_attr(e, 'PW' ~ n ~ '_' ~ k) -%}
+          {%- if div != 1 and v is number %}{{ (v / div) | round(1) }}{% else %}{{ v }}{% endif -%}
+          {%- endif %} | {% endfor %}
+          {% endfor %}
+
+      - type: markdown
+        title: Powerwall energy
+        content: |
+          {% set rows = [
+            ('Remaining kWh', 'POD_nom_energy_remaining', 1000),
+            ('Full pack kWh', 'POD_nom_full_pack_energy', 1000),
+            ('To charge kWh', 'POD_nom_energy_to_be_charged', 1000)
+          ] %}
+          | | 1 | 2 | 3 | 4 | 5 |
+          |:--|:-:|:-:|:-:|:-:|:-:|
+          {% for label, k, div in rows -%}
+          | {{ label }} | {% for n in range(1, 6) -%}
+          {% set e = 'sensor.powerwall_' ~ n ~ '_status' -%}
+          {% if k == 'status' -%}{{ states(e) }}
+          {%- else -%}{% set v = state_attr(e, 'PW' ~ n ~ '_' ~ k) -%}
+          {%- if div != 1 and v is number %}{{ (v / div) | round(1) }}{% else %}{{ v }}{% endif -%}
+          {%- endif %} | {% endfor %}
+          {% endfor %}

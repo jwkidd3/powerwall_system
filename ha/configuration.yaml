@@ -149,6 +149,68 @@ rest:
         value_template: "{{ value_json.backup_reserve_percent | round(0) }}"
         unit_of_measurement: "%"
 
+  # Per-Powerwall status. State = OK / FAULT; every flag is also an attribute (shown on the Powerwall dashboard).
+  - resource: http://192.168.10.101:8675/pod
+    scan_interval: 60
+    timeout: 5
+    sensor:
+      - name: "Powerwall 1 Status"
+        unique_id: pw1_status
+        value_template: "{{ 'FAULT' if (value_json.PW1_POD_PermanentlyFaulted | int(0) or value_json.PW1_POD_PersistentlyFaulted | int(0) or value_json.PW1_wobble_detected | int(0)) else 'OK' }}"
+        json_attributes: [PW1_POD_PermanentlyFaulted, PW1_POD_PersistentlyFaulted, PW1_wobble_detected, PW1_charge_power_clamped, PW1_pinv_state, PW1_pinv_grid_state, PW1_off_grid, PW1_vf_mode, PW1_backup_ready, PW1_POD_ActiveHeating, PW1_POD_enable_line, PW1_POD_ChargeRequest, PW1_POD_ChargeComplete, PW1_POD_DischargeComplete, PW1_POD_nom_energy_remaining, PW1_POD_nom_full_pack_energy, PW1_POD_nom_energy_to_be_charged]
+      - name: "Powerwall 2 Status"
+        unique_id: pw2_status
+        value_template: "{{ 'FAULT' if (value_json.PW2_POD_PermanentlyFaulted | int(0) or value_json.PW2_POD_PersistentlyFaulted | int(0) or value_json.PW2_wobble_detected | int(0)) else 'OK' }}"
+        json_attributes: [PW2_POD_PermanentlyFaulted, PW2_POD_PersistentlyFaulted, PW2_wobble_detected, PW2_charge_power_clamped, PW2_pinv_state, PW2_pinv_grid_state, PW2_off_grid, PW2_vf_mode, PW2_backup_ready, PW2_POD_ActiveHeating, PW2_POD_enable_line, PW2_POD_ChargeRequest, PW2_POD_ChargeComplete, PW2_POD_DischargeComplete, PW2_POD_nom_energy_remaining, PW2_POD_nom_full_pack_energy, PW2_POD_nom_energy_to_be_charged]
+      - name: "Powerwall 3 Status"
+        unique_id: pw3_status
+        value_template: "{{ 'FAULT' if (value_json.PW3_POD_PermanentlyFaulted | int(0) or value_json.PW3_POD_PersistentlyFaulted | int(0) or value_json.PW3_wobble_detected | int(0)) else 'OK' }}"
+        json_attributes: [PW3_POD_PermanentlyFaulted, PW3_POD_PersistentlyFaulted, PW3_wobble_detected, PW3_charge_power_clamped, PW3_pinv_state, PW3_pinv_grid_state, PW3_off_grid, PW3_vf_mode, PW3_backup_ready, PW3_POD_ActiveHeating, PW3_POD_enable_line, PW3_POD_ChargeRequest, PW3_POD_ChargeComplete, PW3_POD_DischargeComplete, PW3_POD_nom_energy_remaining, PW3_POD_nom_full_pack_energy, PW3_POD_nom_energy_to_be_charged]
+      - name: "Powerwall 4 Status"
+        unique_id: pw4_status
+        value_template: "{{ 'FAULT' if (value_json.PW4_POD_PermanentlyFaulted | int(0) or value_json.PW4_POD_PersistentlyFaulted | int(0) or value_json.PW4_wobble_detected | int(0)) else 'OK' }}"
+        json_attributes: [PW4_POD_PermanentlyFaulted, PW4_POD_PersistentlyFaulted, PW4_wobble_detected, PW4_charge_power_clamped, PW4_pinv_state, PW4_pinv_grid_state, PW4_off_grid, PW4_vf_mode, PW4_backup_ready, PW4_POD_ActiveHeating, PW4_POD_enable_line, PW4_POD_ChargeRequest, PW4_POD_ChargeComplete, PW4_POD_DischargeComplete, PW4_POD_nom_energy_remaining, PW4_POD_nom_full_pack_energy, PW4_POD_nom_energy_to_be_charged]
+      - name: "Powerwall 5 Status"
+        unique_id: pw5_status
+        value_template: "{{ 'FAULT' if (value_json.PW5_POD_PermanentlyFaulted | int(0) or value_json.PW5_POD_PersistentlyFaulted | int(0) or value_json.PW5_wobble_detected | int(0)) else 'OK' }}"
+        json_attributes: [PW5_POD_PermanentlyFaulted, PW5_POD_PersistentlyFaulted, PW5_wobble_detected, PW5_charge_power_clamped, PW5_pinv_state, PW5_pinv_grid_state, PW5_off_grid, PW5_vf_mode, PW5_backup_ready, PW5_POD_ActiveHeating, PW5_POD_enable_line, PW5_POD_ChargeRequest, PW5_POD_ChargeComplete, PW5_POD_DischargeComplete, PW5_POD_nom_energy_remaining, PW5_POD_nom_full_pack_energy, PW5_POD_nom_energy_to_be_charged]
+
+  # Per-Powerwall output power (kW from the proxy -> W). Cross-reference for the Emporia 3 CTs.
+  - resource: http://192.168.10.101:8675/freq
+    scan_interval: 30
+    timeout: 5
+    sensor:
+      - name: "Powerwall 1 Output Power"
+        unique_id: pw1_output_power
+        value_template: "{{ ((value_json.PW1_p_out | float(0)) * 1000) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall 2 Output Power"
+        unique_id: pw2_output_power
+        value_template: "{{ ((value_json.PW2_p_out | float(0)) * 1000) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall 3 Output Power"
+        unique_id: pw3_output_power
+        value_template: "{{ ((value_json.PW3_p_out | float(0)) * 1000) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall 4 Output Power"
+        unique_id: pw4_output_power
+        value_template: "{{ ((value_json.PW4_p_out | float(0)) * 1000) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+      - name: "Powerwall 5 Output Power"
+        unique_id: pw5_output_power
+        value_template: "{{ ((value_json.PW5_p_out | float(0)) * 1000) | round(0) }}"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+
   - resource: http://192.168.10.101:8675/api/operation
     scan_interval: 305
     timeout: 5
@@ -163,6 +225,48 @@ rest:
              else m }}
 
 template:
+  # ── Powerwall health checks. State ON = problem (device_class problem shows OK / Problem) ──
+  - binary_sensor:
+      - name: "Powerwall Capacity Check"
+        unique_id: pw_check_capacity
+        device_class: problem
+        # 5 healthy units ~74 kWh full pack; a missing unit drops ~15 kWh. Adjust 70 if packs age.
+        state: "{{ states('sensor.powerwall_full_pack_energy') | float(0) < 70 }}"
+      - name: "Powerwall Units Reporting Check"
+        unique_id: pw_check_reporting
+        device_class: problem
+        state: >
+          {% set ids = ['sensor.powerwall_1_output_power','sensor.powerwall_2_output_power',
+                        'sensor.powerwall_3_output_power','sensor.powerwall_4_output_power',
+                        'sensor.powerwall_5_output_power'] %}
+          {{ ids | reject('has_value') | list | count > 0 }}
+      - name: "Powerwall Balance Check"
+        unique_id: pw_check_balance
+        device_class: problem
+        # Problem if any unit is more than 25% from the average, once average output is over 200 W
+        state: >
+          {% set v = [states('sensor.powerwall_1_output_power') | float(0),
+                      states('sensor.powerwall_2_output_power') | float(0),
+                      states('sensor.powerwall_3_output_power') | float(0),
+                      states('sensor.powerwall_4_output_power') | float(0),
+                      states('sensor.powerwall_5_output_power') | float(0)] %}
+          {% set avg = (v | sum) / 5 %}
+          {{ avg > 200 and ((v | max) > avg * 1.25 or (v | min) < avg * 0.75) }}
+      - name: "Powerwall Gateway Feed Check"
+        unique_id: pw_check_feed
+        device_class: problem
+        state: "{{ not is_state('binary_sensor.powerwall_feed_healthy', 'on') }}"
+      - name: "Powerwall Emporia Cross-Check"
+        unique_id: pw_check_crosscheck
+        device_class: problem
+        # Problem if the Emporia feeder total and Tesla battery power differ by more than 25%, once battery power is over 300 W
+        state: >
+          {% set f = states.sensor | selectattr('name', 'eq', 'Generation Panel Total Power') | map(attribute='state') | list %}
+          {% set b = states('sensor.powerwall_battery_power') | float(0) %}
+          {% if f | length == 0 or not (f[0] | is_number) %}true
+          {% elif b | abs < 300 %}false
+          {% else %}{{ ((f[0] | float(0)) - b) | abs / (b | abs) > 0.25 }}
+          {% endif %}
   - sensor:
       - name: "Arb grid link"
         unique_id: arb_grid_link
