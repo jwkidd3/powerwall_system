@@ -1,5 +1,5 @@
 esphome:
-  name: emporia-1
+  name: backup-panel
   friendly_name: Backup Panel
 
 external_components:
