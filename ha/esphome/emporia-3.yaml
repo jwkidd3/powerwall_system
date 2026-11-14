@@ -1,5 +1,5 @@
 esphome:
-  name: emporia-3
+  name: generation-panel
   friendly_name: Generation Panel
 
 external_components:
